@@ -59,33 +59,49 @@ using Microsoft.Build.Framework;
             v.Add("SWITCH_VERSION_YEAR", year);
             
             foreach (Match m in Regex.Matches(ConfigureAC, pattern)) {
-               string value = m.Groups[2].Value.Trim();
-               if (value.Contains("-")) {
-                   string[] tokens = value.Split('-');
-                   value = tokens[0];
-               }        
                var name = m.Groups[1].Value.Trim();
-               value = value.Trim();
+               string value = m.Groups[2].Value.Trim();
+
+               // NOTE (Sytel): Do NOT strip the suffix after '-' from parsed
+               // values. SWITCH_VERSION_MICRO intentionally carries a release
+               // suffix (e.g. "1-sytel.1") so the version banner and DLL strings
+               // self-identify as the Sytel patched build. Numeric-only
+               // compatibility for the Win32 VERSIONINFO FILEVERSION quad is
+               // handled below when generating switch_version.inc.
 
                if (name.StartsWith("SWITCH_VERSION_REVISION")) {
                    if (string.IsNullOrWhiteSpace(value)) {
                        value = revision;
                    }
 
+                   // NOTE (Sytel): stamp only the git sha (as "~<sha>"), not a
+                   // synthetic "-release"/"-dev-<N>" label. The real release
+                   // identity lives in SWITCH_VERSION_MICRO (1.11.1-sytel.1);
+                   // labelling this build -release/-dev would misreport it.
                    if (name != "SWITCH_VERSION_REVISION_HUMAN") {
                        value = "~" + value;
-                   
-                       if (commit_count > 0) {
-                           value = "-dev-"+ commits + value;
-                       } else {
-                           value = "-release" + value;
-                       }
                    }
                }
                v.Add(name, value);
                Log.LogMessage(MessageImportance.High, name + " = '" + value + "'");
             }
-            
+
+            // Derive display/numeric variants of the micro version.
+            // microFull carries the suffix (e.g. "1-sytel.1") and is used for the
+            // human-readable banner (switch_version.h). microNumeric is the bare
+            // leading integer (e.g. "1") required by the Win32 VERSIONINFO
+            // FILEVERSION / PRODUCTVERSION quads in switch_version.inc.
+            string microFull = v["SWITCH_VERSION_MICRO"];
+            string microNumeric = microFull;
+            int dashIdx = microFull.IndexOf('-');
+            if (dashIdx >= 0) {
+                microNumeric = microFull.Substring(0, dashIdx).Trim();
+            }
+            string versionAll = v["SWITCH_VERSION_MAJOR"] + "." + v["SWITCH_VERSION_MINOR"] + "." + microFull;
+            Log.LogMessage(MessageImportance.High, "SWITCH_VERSION_MICRO (display) = '" + microFull + "'");
+            Log.LogMessage(MessageImportance.High, "SWITCH_VERSION_MICRO (numeric) = '" + microNumeric + "'");
+            Log.LogMessage(MessageImportance.High, "SWITCH_VERSION_ALL = '" + versionAll + "'");
+
             //---------------------------------------------------------            
             Log.LogMessage(MessageImportance.High,
                 "Generating switch_version.h");            
@@ -105,13 +121,21 @@ using Microsoft.Build.Framework;
                 "Generating switch_version.inc");                    
             
             TemplatePath = @"$(ProjectDir)\switch_version.inc.template";
-            DestinationPath = @"$(ProjectDir)\switch_version.inc";            
+            DestinationPath = @"$(ProjectDir)\switch_version.inc";
+
+            // switch_version.inc feeds the Win32 VERSIONINFO resource. The
+            // FILEVERSION / PRODUCTVERSION quads require a *numeric* micro, so
+            // override SWITCH_VERSION_MICRO to its numeric prefix here while
+            // exposing the full display version via SWITCH_VERSION_ALL.
+            Dictionary<string, string> vinc = new Dictionary<string, string>(v);
+            vinc["SWITCH_VERSION_MICRO"] = microNumeric;
+            vinc["SWITCH_VERSION_ALL"] = versionAll;
 
             template = File.ReadAllText(TemplatePath);
-            foreach (var version_bit in v) {
+            foreach (var version_bit in vinc) {
                 template = template.Replace("@" + version_bit.Key + "@", version_bit.Value);
             }
-                                                           
+
             File.WriteAllText(DestinationPath, template);
             
             //---------------------------------------------------------
