@@ -635,6 +635,9 @@ struct tone_detector {
 
 	/** The session that owns this detector */
 	switch_core_session_t *session;
+
+	/** Resampler to convert audio to 8kHz for spandsp */
+	switch_audio_resampler_t *resampler;
 };
 typedef struct tone_detector tone_detector_t;
 
@@ -863,6 +866,9 @@ static void tone_detector_destroy(tone_detector_t *detector)
 			tone_descriptor_destroy(detector->descriptor);
 			detector->descriptor = NULL;
 		}
+		if (detector->resampler) {
+			switch_resample_destroy(&detector->resampler);
+		}
 	}
 }
 
@@ -933,6 +939,11 @@ static switch_bool_t callprogress_detector_process_buffer(switch_media_bug_t *bu
 	{
 		switch_frame_t *frame;
 		const char *detected_tone = NULL;
+		switch_codec_implementation_t read_impl = { 0 };
+		int16_t data[SWITCH_RECOMMENDED_BUFFER_SIZE];
+		int16_t *dp;
+		int datalen;
+		int samples;
 		if (!detector->spandsp_detector) {
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "detector is destroyed\n");
 			return SWITCH_FALSE;
@@ -941,7 +952,45 @@ static switch_bool_t callprogress_detector_process_buffer(switch_media_bug_t *bu
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "error reading frame\n");
 			return SWITCH_FALSE;
 		}
-		tone_detector_process_buffer(detector, frame->data, frame->samples, &detected_tone);
+
+		dp = frame->data;
+		datalen = frame->datalen;
+		samples = frame->samples;
+
+		switch_core_session_get_read_impl(session, &read_impl);
+
+		if (read_impl.number_of_channels != 1 || read_impl.actual_samples_per_second != 8000) {
+			memcpy(data, frame->data, frame->datalen);
+			dp = data;
+		}
+
+		if (read_impl.number_of_channels != 1) {
+			uint32_t rlen = frame->datalen / 2 / read_impl.number_of_channels;
+
+			switch_mux_channels((int16_t *) dp, rlen, read_impl.number_of_channels, 1);
+			datalen = rlen * 2 * 1;
+			samples = datalen / 2;
+		}
+
+		if (read_impl.actual_samples_per_second != 8000) {
+			if (!detector->resampler) {
+				if (switch_resample_create(&detector->resampler,
+										   read_impl.actual_samples_per_second,
+										   8000,
+										   8 * (read_impl.microseconds_per_packet / 1000) * 2,
+										   SWITCH_RESAMPLE_QUALITY,
+										   1) != SWITCH_STATUS_SUCCESS) {
+					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Unable to allocate resampler\n");
+					return SWITCH_FALSE;
+				}
+			}
+
+			switch_resample_process(detector->resampler, dp, (int) datalen / 2 / 1);
+			memcpy(dp, detector->resampler->to, detector->resampler->to_len * 2 * 1);
+			samples = detector->resampler->to_len;
+		}
+
+		tone_detector_process_buffer(detector, dp, samples, &detected_tone);
 		if (detected_tone) {
 			switch_event_t *event = NULL;
 			switch_channel_t *channel = switch_core_session_get_channel(session);
