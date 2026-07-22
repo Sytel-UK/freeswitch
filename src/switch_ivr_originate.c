@@ -141,6 +141,7 @@ typedef struct {
 	int confirm_read_timeout;
 	char key[80];
 	uint8_t early_ok;
+	uint8_t inherit_codec_wait;
 	uint8_t ring_ready;
 	uint8_t instant_ringback;
 	uint8_t sent_ring;
@@ -774,7 +775,8 @@ static uint8_t check_channel_status(originate_global_t *oglobals, uint32_t len, 
 				}
 			}
 		} else if ((switch_channel_test_flag(oglobals->originate_status[i].peer_channel, CF_ANSWERED) ||
-					(oglobals->early_ok && switch_channel_test_flag(oglobals->originate_status[i].peer_channel, CF_EARLY_MEDIA)) ||
+					(oglobals->early_ok && switch_channel_test_flag(oglobals->originate_status[i].peer_channel, CF_EARLY_MEDIA) &&
+					 (!oglobals->inherit_codec_wait || switch_channel_media_ready(oglobals->originate_status[i].peer_channel))) ||
 					(oglobals->ring_ready && oglobals->return_ring_ready && len == 1 &&
 					 switch_channel_test_flag(oglobals->originate_status[i].peer_channel, CF_RING_READY))
 				   )
@@ -2225,6 +2227,16 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_originate(switch_core_session_t *sess
 
 	oglobals.idx = IDX_NADA;
 	oglobals.early_ok = 1;
+
+	/* inherit_codec copies the peer's negotiated read codec, which does not exist until the peer's media is fully set up
+	   -- yet a peer gains CF_EARLY_MEDIA slightly before that.
+	   So when the caller wants inherit_codec, hold early-media acceptance until the peer is media-ready.
+	 */
+	if (caller_channel && !switch_channel_test_flag(caller_channel, CF_PROXY_MODE) &&
+		!switch_channel_test_flag(caller_channel, CF_PROXY_MEDIA) &&
+		switch_true(switch_channel_get_variable(caller_channel, "inherit_codec"))) {
+		oglobals.inherit_codec_wait = 1;
+	}
 
 	*bleg = NULL;
 
