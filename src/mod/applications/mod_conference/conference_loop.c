@@ -1348,14 +1348,14 @@ void conference_loop_output(conference_member_t *member)
 					  member->conference->timer_name, interval, tsamples, real_read_impl.iananame);
 
 
-	write_frame.data = data = switch_core_session_alloc(member->session, SWITCH_RECOMMENDED_BUFFER_SIZE);
+	write_frame.data = data = switch_core_alloc(member->pool, SWITCH_RECOMMENDED_BUFFER_SIZE);
 	write_frame.buflen = SWITCH_RECOMMENDED_BUFFER_SIZE;
 
 
 	write_frame.codec = &member->write_codec;
 
 	/* Start the input thread */
-	conference_loop_launch_input(member, switch_core_session_get_pool(member->session));
+	conference_loop_launch_input(member, member->pool);
 
 	if ((call_list = switch_channel_get_private(channel, "_conference_autocall_list_"))) {
 		const char *cid_name = switch_channel_get_variable(channel, "conference_auto_outcall_caller_id_name");

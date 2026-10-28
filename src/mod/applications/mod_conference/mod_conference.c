@@ -2388,7 +2388,13 @@ SWITCH_STANDARD_APP(conference_function)
 
 	member.session = session;
 	member.channel = switch_core_session_get_channel(session);
-	member.pool = switch_core_session_get_pool(session);
+
+	/* The member's own pool, not the session's, as a channel can join many times in its life
+	 * (e.g. conference transfer) and per-join queues, locks and buffers would accumulate. */
+	if (switch_core_new_memory_pool(&member.pool) != SWITCH_STATUS_SUCCESS) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Pool Failure\n");
+		goto done;
+	}
 
 	/* Prepare MUTEXS */
 	switch_mutex_init(&member.flag_mutex, SWITCH_MUTEX_NESTED, member.pool);
@@ -2486,7 +2492,7 @@ SWITCH_STANDARD_APP(conference_function)
 			conference_loop_output(&member);
 		} else {
 			if (!conference_utils_member_test_flag(&member, MFLAG_ITHREAD)) {
-				conference_loop_launch_input(&member, switch_core_session_get_pool(member.session));
+				conference_loop_launch_input(&member, member.pool);
 			}
 
 			if (conference_utils_member_test_flag((&member), MFLAG_RUNNING) && switch_channel_ready(channel)) {
@@ -2613,6 +2619,18 @@ SWITCH_STANDARD_APP(conference_function)
 	}
 
 	switch_core_session_reset(session, SWITCH_TRUE, SWITCH_TRUE);
+
+	if (switch_core_codec_ready(&member.read_codec)) {
+		switch_core_codec_destroy(&member.read_codec);
+	}
+
+	if (switch_core_codec_ready(&member.write_codec)) {
+		switch_core_codec_destroy(&member.write_codec);
+	}
+
+	if (member.pool) {
+		switch_core_destroy_memory_pool(&member.pool);
+	}
 
 	/* release the readlock */
 	if (conference) {

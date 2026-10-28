@@ -1633,7 +1633,7 @@ switch_status_t conference_member_say(conference_member_t *member, char *text, u
 	if (!member->sh) {
 		memset(&member->lsh, 0, sizeof(member->lsh));
 		if (switch_core_speech_open(&member->lsh, conference->tts_engine, conference->tts_voice,
-									conference->rate, conference->interval, channels, &flags, switch_core_session_get_pool(member->session)) !=
+									conference->rate, conference->interval, channels, &flags, member->pool) !=
 			SWITCH_STATUS_SUCCESS) {
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member->session), SWITCH_LOG_ERROR, "Invalid TTS module [%s]!\n", conference->tts_engine);
 			status = SWITCH_STATUS_FALSE;
